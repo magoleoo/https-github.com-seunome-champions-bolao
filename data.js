@@ -455,6 +455,9 @@ export const knockoutResults = [
 const hopeSoloByParticipant = {
   Enrico: 1,
   Nanel: 1,
+  Scarpa: 2,
+  "Feijão": 1,
+  Michel: 1,
 };
 
 export const leaguePhaseSnapshot = {
