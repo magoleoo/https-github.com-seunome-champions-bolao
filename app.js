@@ -1058,123 +1058,120 @@ function renderPredictionConsultation() {
     predictionsConsultationEl.innerHTML = `
       <article class="rules-card">
         <h3>Consulta dos palpites</h3>
-        <p class="muted">Estou carregando os palpites estruturados do backtest para playoff e oitavas.</p>
+        <p class="muted">Estou carregando os palpites estruturados do backtest para as fases iniciais.</p>
       </article>
     `;
     return;
   }
 
-  predictionsConsultationEl.innerHTML = participants
-    .filter((participant) => backtestData.participants[participant.name])
-    .map((participant) => {
-      const report = backtestData.participants[participant.name];
-      const playoffMatches = report.playoff?.match_details || [];
-      const playoffQualified = report.playoff?.class_details || [];
-      const roundMatches = report.round_of_16?.match_details || [];
-      const roundQualified = report.round_of_16?.class_details || [];
+  const phases = [
+    { key: "playoff", title: "Playoff 1ª fase" },
+    { key: "round_of_16", title: "Oitavas de Final" }
+  ];
 
-      const renderMatchRows = (items) =>
-        items
-          .map(
-            (item) => `
-              <tr>
-                <td>${item.label}</td>
-                <td>${item.predicted}</td>
-                <td>${item.official}</td>
-                <td>${item.exact_hit ? `<span class="result-chip exact">Placar</span>` : item.result_hit ? `<span class="result-chip trend">Tendência</span>` : `<span class="result-chip miss">Errou</span>`}</td>
-              </tr>
-            `
-          )
-          .join("");
+  let markup = "";
 
-      const renderClassRows = (items) =>
-        items
-          .map(
-            (item) => `
-              <tr>
-                <td>${item.pick}</td>
-                <td>${item.official}</td>
-                <td>${item.hit ? `<span class="result-chip exact">Acertou</span>` : `<span class="result-chip miss">Errou</span>`}</td>
-              </tr>
-            `
-          )
-          .join("");
+  phases.forEach((phase) => {
+    const matchesMap = {};
+    const classMap = {};
 
-      return `
+    participants.forEach((p) => {
+      const report = backtestData.participants[p.name];
+      if (!report || !report[phase.key]) return;
+
+      const phaseData = report[phase.key];
+
+      (phaseData.match_details || []).forEach((m) => {
+        if (!matchesMap[m.label]) matchesMap[m.label] = { official: m.official, predictions: [] };
+        matchesMap[m.label].predictions.push({ name: p.name, predicted: m.predicted, exact: m.exact_hit, result: m.result_hit });
+      });
+
+      (phaseData.class_details || []).forEach((c, idx) => {
+        if (!classMap[idx]) classMap[idx] = { official: c.official, predictions: [] };
+        classMap[idx].predictions.push({ name: p.name, pick: c.pick, hit: c.hit });
+      });
+    });
+
+    if (Object.keys(matchesMap).length === 0) return;
+
+    markup += `
+      <section style="margin-bottom: 40px;">
+        <h2 style="margin-bottom: 20px;">${phase.title} - Placares</h2>
+        <div class="predictions-consultation" style="gap: 20px;">
+    `;
+
+    Object.entries(matchesMap).forEach(([label, data]) => {
+      markup += `
         <article class="prediction-consult-card">
           <div class="prediction-consult-header">
-            <div class="name-cell">
-              <span class="prize-mark">${participant.name.charAt(0)}</span>
-              <div>
-                <strong>${participant.name}</strong>
-                <p class="muted">Consulta dos palpites estruturados</p>
-              </div>
+            <div>
+              <strong>${label}</strong>
+              <p class="muted">Placar Oficial: <strong>${data.official}</strong></p>
             </div>
+            <span class="tag">Jogos</span>
           </div>
-
-          <div class="prediction-consult-sections">
-            <section class="prediction-consult-block">
-              <h3>Playoff 1ª fase</h3>
-              <div class="table-wrap">
-                <table class="dashboard-table compact-table">
-                  <thead>
-                    <tr>
-                      <th>Jogo</th>
-                      <th>Palpite</th>
-                      <th>Oficial</th>
-                      <th>Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>${renderMatchRows(playoffMatches)}</tbody>
-                </table>
-              </div>
-              <div class="table-wrap">
-                <table class="dashboard-table compact-table">
-                  <thead>
-                    <tr>
-                      <th>Classificado palpitado</th>
-                      <th>Classificado oficial</th>
-                      <th>Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>${renderClassRows(playoffQualified)}</tbody>
-                </table>
-              </div>
-            </section>
-
-            <section class="prediction-consult-block">
-              <h3>Oitavas</h3>
-              <div class="table-wrap">
-                <table class="dashboard-table compact-table">
-                  <thead>
-                    <tr>
-                      <th>Jogo</th>
-                      <th>Palpite</th>
-                      <th>Oficial</th>
-                      <th>Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>${renderMatchRows(roundMatches)}</tbody>
-                </table>
-              </div>
-              <div class="table-wrap">
-                <table class="dashboard-table compact-table">
-                  <thead>
-                    <tr>
-                      <th>Classificado palpitado</th>
-                      <th>Classificado oficial</th>
-                      <th>Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>${renderClassRows(roundQualified)}</tbody>
-                </table>
-              </div>
-            </section>
+          <div class="table-wrap">
+            <table class="dashboard-table compact-table">
+              <thead>
+                <tr>
+                  <th>Palpiteiro</th>
+                  <th>Palpite</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${data.predictions.map(p => `
+                  <tr>
+                    <td><strong>${p.name}</strong></td>
+                    <td>${p.predicted}</td>
+                    <td>${p.exact ? '<span class="result-chip exact">Exato</span>' : p.result ? '<span class="result-chip trend">Tendência</span>' : '<span class="result-chip miss">Errou</span>'}</td>
+                  </tr>
+                `).join("")}
+              </tbody>
+            </table>
           </div>
         </article>
       `;
-    })
-    .join("");
+    });
+
+    markup += `</div></section>`;
+
+    if (Object.keys(classMap).length > 0) {
+      markup += `
+        <section style="margin-bottom: 40px;">
+          <h2 style="margin-bottom: 20px;">${phase.title} - Classificados</h2>
+          <div class="predictions-consultation" style="gap: 20px;">
+            <article class="prediction-consult-card">
+              <div class="table-wrap">
+                <table class="dashboard-table compact-table">
+                  <thead>
+                    <tr>
+                      <th>Palpiteiro</th>
+                      ${Object.values(classMap).map(c => `<th>Oficial: <strong>${c.official || "-"}</strong></th>`).join("")}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${participants.filter((p) => backtestData.participants[p.name]).map((p) => `
+                      <tr>
+                        <td><strong>${p.name}</strong></td>
+                        ${Object.values(classMap).map((c) => {
+                          const pred = c.predictions.find((x) => x.name === p.name);
+                          if (!pred) return `<td>-</td>`;
+                          return `<td>${pred.pick} <br/><span style="color: ${pred.hit ? 'var(--accent-strong)' : 'var(--danger)'}">${pred.hit ? "✅ Acertou" : "❌ Errou"}</span></td>`;
+                        }).join("")}
+                      </tr>
+                    `).join("")}
+                  </tbody>
+                </table>
+              </div>
+            </article>
+          </div>
+        </section>
+      `;
+    }
+  });
+
+  predictionsConsultationEl.innerHTML = markup;
 }
 
 function toggleLoginState() {
