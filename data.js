@@ -700,7 +700,7 @@ export const winnersHistory = [
   { season: "21/22", guanabara: "Leo Raposo", first: "Leo Raposo", second: "Gui Giron", third: "Rafinha", fourth: "Felippe Leite", participants: 18 },
   { season: "22/23", guanabara: "Leo Raposo", first: "Ranieri", second: "Leo Raposo", third: "Gui Giron", fourth: "Biel", participants: 20 },
   { season: "23/24", guanabara: "Felippe Leite", first: "Dan", second: "Serginho", third: "Michel", fourth: "Leo Raposo", participants: 20 },
-  { season: "24/25", guanabara: "Leo Raposo", first: "Leo Raposo", second: "Muca", third: "Feijão", fourth: "Ranieri", participants: 20 },
+  { season: "24/25", guanabara: "Leo Raposo", first: "Muca", second: "Leo Raposo", third: "Feijão", fourth: "Ranieri", participants: 20 },
   { season: "25/26", guanabara: "Felippe Leite", first: "", second: "", third: "", fourth: "", participants: 21 },
   { season: "26/27", guanabara: "", first: "", second: "", third: "", fourth: "", participants: 21 },
   { season: "27/28", guanabara: "", first: "", second: "", third: "", fourth: "", participants: 21 },
