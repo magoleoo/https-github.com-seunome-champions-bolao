@@ -1296,14 +1296,14 @@ async function loadSuperclassicData() {
 
 async function loadBacktestData() {
   try {
-    const response = await fetch("./backtest-report.json", { cache: "no-store" });
+    const response = await fetch("./api/ranking.json", { cache: "no-store" });
     if (!response.ok) {
-      throw new Error(`Falha ao carregar backtest-report.json: ${response.status}`);
+      throw new Error(`Falha ao carregar ranking.json: ${response.status}`);
     }
     backtestData = await response.json();
   } catch (error) {
     console.error(error);
-    backtestData = { participants: {} };
+    backtestData = { ranking: [] };
   }
 }
 
