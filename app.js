@@ -1,7 +1,6 @@
 import {
   competitionSnapshot,
   competitionAssets,
-  knockoutResults,
   leaguePhaseSnapshot,
   officialSources,
   participantSnapshots,
@@ -92,8 +91,16 @@ function getParticipantById(id) {
   return participants.find((participant) => participant.id === id);
 }
 
-function normalizeText(value) {
-  return value
+let knockoutResults = [];
+let activeResultsTab = 'ROUND_OF_16';
+
+window.setResultsTab = (tab) => {
+  activeResultsTab = tab;
+  renderMatches();
+};
+
+function normalizeText(text) {
+  return text
     .trim()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
@@ -116,14 +123,32 @@ function getActiveParticipantLabel() {
 }
 
 function getRankingRows() {
-  return leaguePhaseSnapshot.leaderboard.map((row) => {
-    const participant = participants.find((item) => item.name === row.name) || {
-      id: row.name,
-      name: row.name,
+  if (!backtestData || !backtestData.ranking) return [];
+  const mapped = backtestData.ranking.map((row) => {
+    let nameToMatch = row.name;
+    const participant = participants.find(
+      (item) => normalizeText(item.name) === normalizeText(nameToMatch) 
+      || item.id === nameToMatch.toLowerCase().replace(' ', '-')
+    ) || {
+      id: row.participant_id,
+      name: nameToMatch.charAt(0).toUpperCase() + nameToMatch.slice(1),
       accessCode: "",
     };
-    return { ...row, participant };
+    return { 
+      participant: participant,
+      total: row.total_points,
+      firstPhase: row.first_phase_points,
+      playoff: row.playoff_points,
+      roundOf16: row.round_of_16_points,
+      superclassic: row.superclassic_points,
+      hopeSolo: row.hope_solo_hits,
+      favoriteTeam: "-",
+      scorerPick: "-",
+      assistPick: "-"
+    };
   });
+  mapped.sort((a, b) => b.total - a.total);
+  return mapped.map((r, i) => ({ ...r, position: i + 1 }));
 }
 
 function formatPoints(value) {
@@ -406,90 +431,94 @@ function renderRanking(leaderboard) {
 }
 
 function renderMatches() {
-  const leaguePhaseMarkup = leaguePhaseData
-    ? Object.entries(
-        leaguePhaseData.records.reduce((acc, record) => {
-          if (!record.matchday.startsWith("Machtday")) return acc;
-          if (!acc[record.matchday]) acc[record.matchday] = [];
-          acc[record.matchday].push(record);
-          return acc;
-        }, {})
-      )
-        .map(
-          ([matchday, records]) => `
-            <section class="phase-block">
-              <div class="phase-block-header">
-                <div>
-                  <p class="eyebrow">Fase do campeonato</p>
-                  <h3>Primeira fase • ${matchday}</h3>
-                </div>
-                <span class="tag">${records.length} partidas</span>
-              </div>
-              <div class="league-phase-grid">
-                ${records
-                  .map(
-                    (record, index) => `
-                      <article class="league-row-card ${isManualSuperclassic(createLeagueMatchId(matchday, index)) ? "is-superclassic" : ""}">
-                        <div class="superclassic-card-header">
-                          <strong>Jogo ${index + 1}</strong>
-                          ${
-                            isManualSuperclassic(createLeagueMatchId(matchday, index))
-                              ? `<span class="superclassic-chip">Superclássico</span>`
-                              : ""
-                          }
-                        </div>
-                        <span class="muted">Resultado oficial: ${record.official}</span>
-                        <small class="muted">${record.picks.length} palpites registrados</small>
-                        <button
-                          class="superclassic-toggle"
-                          type="button"
-                          data-superclassic-id="${createLeagueMatchId(matchday, index)}"
-                        >
-                          ${
-                            isManualSuperclassic(createLeagueMatchId(matchday, index))
-                              ? "Remover de superclássicos"
-                              : "Marcar como superclássico"
-                          }
-                        </button>
-                      </article>
-                    `
-                  )
-                  .join("")}
-              </div>
-            </section>
-          `
+  const tabsMarkup = `
+    <div class="tabs-bar" style="margin-bottom: 24px; border-bottom: 1px solid var(--line); padding-bottom: 12px; overflow-x: auto;">
+      <button class="tab-button ${activeResultsTab === 'LEAGUE' ? 'is-active' : ''}" onclick="setResultsTab('LEAGUE')">Primeira Fase</button>
+      <button class="tab-button ${activeResultsTab === 'PLAYOFF' ? 'is-active' : ''}" onclick="setResultsTab('PLAYOFF')">Playoffs</button>
+      <button class="tab-button ${activeResultsTab === 'ROUND_OF_16' ? 'is-active' : ''}" onclick="setResultsTab('ROUND_OF_16')">Oitavas</button>
+      <button class="tab-button ${activeResultsTab === 'QUARTER' ? 'is-active' : ''}" onclick="setResultsTab('QUARTER')">Quartas</button>
+    </div>
+  `;
+
+  let contentMarkup = "";
+
+  if (activeResultsTab === 'LEAGUE') {
+    const leaguePhaseMarkup = leaguePhaseData
+      ? Object.entries(
+          leaguePhaseData.records.reduce((acc, record) => {
+            if (!record.matchday.startsWith("Machtday")) return acc;
+            if (!acc[record.matchday]) acc[record.matchday] = [];
+            acc[record.matchday].push(record);
+            return acc;
+          }, {})
         )
-        .join("")
-    : `
-      <section class="phase-block">
-        <div class="phase-block-header">
-          <div>
-            <p class="eyebrow">Fase do campeonato</p>
-            <h3>Primeira fase</h3>
-          </div>
-          <span class="tag">carregando</span>
-        </div>
-        <p class="muted">Estou carregando os 144 jogos da fase de liga a partir da planilha oficial.</p>
-      </section>
-    `;
-
-  const groupedMatches = Object.entries(
-    knockoutResults.reduce((acc, match) => {
-      if (!acc[match.phase]) acc[match.phase] = [];
-      acc[match.phase].push(match);
-      return acc;
-    }, {})
-  );
-
-  matchesGrid.innerHTML = [
-    leaguePhaseMarkup,
-    ...groupedMatches.map(
-      ([phase, matches]) => `
+          .map(
+            ([matchday, records]) => `
+              <section class="phase-block">
+                <div class="phase-block-header">
+                  <div>
+                    <p class="eyebrow">Fase do campeonato</p>
+                    <h3>Primeira fase • ${matchday}</h3>
+                  </div>
+                  <span class="tag">${records.length} partidas</span>
+                </div>
+                <div class="league-phase-grid">
+                  ${records
+                    .map(
+                      (record, index) => `
+                        <article class="league-row-card ${isManualSuperclassic(createLeagueMatchId(matchday, index)) ? "is-superclassic" : ""}">
+                          <div class="superclassic-card-header">
+                            <strong>Jogo ${index + 1}</strong>
+                            ${
+                              isManualSuperclassic(createLeagueMatchId(matchday, index))
+                                ? `<span class="superclassic-chip">Superclássico</span>`
+                                : ""
+                            }
+                          </div>
+                          <span class="muted">Resultado oficial: ${record.official}</span>
+                          <small class="muted">${record.picks.length} palpites registrados</small>
+                          <button
+                            class="superclassic-toggle"
+                            type="button"
+                            data-superclassic-id="${createLeagueMatchId(matchday, index)}"
+                          >
+                            ${
+                              isManualSuperclassic(createLeagueMatchId(matchday, index))
+                                ? "Remover de superclássicos"
+                                : "Marcar como superclássico"
+                            }
+                          </button>
+                        </article>
+                      `
+                    )
+                    .join("")}
+                </div>
+              </section>
+            `
+          )
+          .join("")
+      : `
         <section class="phase-block">
           <div class="phase-block-header">
             <div>
               <p class="eyebrow">Fase do campeonato</p>
-              <h3>${phaseRules[phase].label}</h3>
+              <h3>Primeira fase</h3>
+            </div>
+            <span class="tag">carregando</span>
+          </div>
+          <p class="muted">Estou carregando os 144 jogos da fase de liga a partir da planilha oficial.</p>
+        </section>
+      `;
+      contentMarkup = leaguePhaseMarkup;
+  } else {
+    const matches = knockoutResults.filter(m => m.phase === activeResultsTab);
+    const phaseLabel = phaseRules[activeResultsTab] ? phaseRules[activeResultsTab].label : (activeResultsTab === 'QUARTER' ? 'Quartas' : activeResultsTab);
+    contentMarkup = `
+        <section class="phase-block">
+          <div class="phase-block-header">
+            <div>
+              <p class="eyebrow">Fase do campeonato</p>
+              <h3>${phaseLabel}</h3>
             </div>
             <span class="tag">${matches.length} jogos</span>
           </div>
@@ -503,7 +532,7 @@ function renderMatches() {
                   <article class="match-card ${isManualSuperclassic(match.id) ? "is-superclassic" : ""}">
                     <div class="match-header">
                       <div>
-                        <p class="eyebrow">${phaseRules[match.phase].label}</p>
+                        <p class="eyebrow">${phaseLabel}</p>
                         <strong>${match.roundLabel}</strong>
                       </div>
                       <div class="match-header-tags">
@@ -516,10 +545,10 @@ function renderMatches() {
                       <span class="team-line right">${match.awayTeam} ${teamBadgeMarkup(match.awayTeam)}</span>
                     </div>
                     <div class="scoreline">
-                      <strong>${match.scoreFinal.home}</strong>
-                      <strong>${match.scoreFinal.away}</strong>
+                      <strong>${match.scoreFinal.home ?? '-'}</strong>
+                      <strong>${match.scoreFinal.away ?? '-'}</strong>
                     </div>
-                    <p class="muted">${formatKickoff(match.kickoff)} • agregado ${match.aggregate}${match.qualified ? ` • classificado: ${match.qualified}` : ""}${match.extraTime ? " • prorrogação" : ""}</p>
+                    <p class="muted">${formatKickoff(match.kickoff)}${match.aggregate ? ` • agregado ${match.aggregate}` : ''}${match.qualified ? ` • classificado: ${match.qualified}` : ""}${match.extraTime ? " • prorrogação" : ""}</p>
                     ${
                       highlights
                         ? `
@@ -540,9 +569,10 @@ function renderMatches() {
               .join("")}
           </div>
         </section>
-      `
-    ),
-  ].join("");
+      `;
+  }
+
+  matchesGrid.innerHTML = tabsMarkup + contentMarkup;
 }
 
 function renderParticipantSnapshot() {
@@ -1061,11 +1091,11 @@ window.setConsultTab = function(tab) {
 };
 
 function renderPredictionConsultation() {
-  if (!backtestData?.participants) {
+  if (!backtestData || !backtestData.ranking) {
     predictionsConsultationEl.innerHTML = `
       <article class="rules-card">
         <h3>Consulta dos palpites</h3>
-        <p class="muted">Estou carregando os palpites estruturados do backtest para as fases iniciais.</p>
+        <p class="muted">Estou carregando os palpites atualizados da temporada 25/26...</p>
       </article>
     `;
     return;
@@ -1073,10 +1103,9 @@ function renderPredictionConsultation() {
 
   const tabsMarkup = `
     <div class="tabs-bar" style="margin-bottom: 24px; border-bottom: 1px solid var(--line); padding-bottom: 12px; overflow-x: auto;">
-      <button class="tab-button ${activeConsultTab === 'primeira' ? 'is-active' : ''}" onclick="setConsultTab('primeira')">Primeira Fase</button>
-      <button class="tab-button ${activeConsultTab === 'class8' ? 'is-active' : ''}" onclick="setConsultTab('class8')">8 Qualificados</button>
       <button class="tab-button ${activeConsultTab === 'playoff' ? 'is-active' : ''}" onclick="setConsultTab('playoff')">Playoffs</button>
       <button class="tab-button ${activeConsultTab === 'oitavas' ? 'is-active' : ''}" onclick="setConsultTab('oitavas')">Oitavas</button>
+      <button class="tab-button ${activeConsultTab === 'class8' ? 'is-active' : ''}" onclick="setConsultTab('class8')" style="display:none;">8 Qualificados</button>
     </div>
   `;
 
@@ -1087,20 +1116,18 @@ function renderPredictionConsultation() {
     const matchesMap = {};
     const classMap = {};
 
-    participants.forEach((p) => {
-      const report = backtestData.participants[p.name];
-      if (!report || !report[phaseKey]) return;
-
-      const phaseData = report[phaseKey];
-
-      (phaseData.match_details || []).forEach((match) => {
+    backtestData.ranking.forEach((r) => {
+      const pName = r.name;
+      const matchDetails = r.breakdown?.match_details || [];
+      matchDetails.filter(md => md.phase === phaseKey).forEach((match) => {
         if (!matchesMap[match.label]) matchesMap[match.label] = { official: match.official, predictions: [] };
-        matchesMap[match.label].predictions.push({ name: p.name, predicted: match.predicted, exact: match.exact_hit, result: match.result_hit });
+        matchesMap[match.label].predictions.push({ name: pName, predicted: match.predicted, exact: match.exact_hit, result: match.result_hit });
       });
 
-      (phaseData.class_details || []).forEach((c, idx) => {
+      const classDetails = r.breakdown?.class_details || [];
+      classDetails.filter(cd => cd.phase === phaseKey).forEach((c, idx) => {
         if (!classMap[idx]) classMap[idx] = { official: c.official, predictions: [] };
-        classMap[idx].predictions.push({ name: p.name, pick: c.pick, hit: c.hit });
+        classMap[idx].predictions.push({ name: pName, pick: c.pick, hit: c.hit });
       });
     });
 
@@ -1117,7 +1144,7 @@ function renderPredictionConsultation() {
               <table class="dashboard-table compact-table">
                 <thead><tr><th>Palpiteiro</th><th>Palpite</th><th>Status</th></tr></thead>
                 <tbody>
-                  ${data.predictions.map(p => `<tr><td><strong>${p.name}</strong></td><td>${p.predicted}</td><td>${p.exact ? '<span class="result-chip exact">Exato</span>' : p.result ? '<span class="result-chip trend">Tendência</span>' : '<span class="result-chip miss">Errou</span>'}</td></tr>`).join("")}
+                  ${data.predictions.map(p => `<tr><td><strong>${p.name.charAt(0).toUpperCase() + p.name.slice(1)}</strong></td><td>${p.predicted}</td><td>${p.exact ? '<span class="result-chip exact">Exato</span>' : p.result ? '<span class="result-chip trend">Tendência</span>' : '<span class="result-chip miss">Errou</span>'}</td></tr>`).join("")}
                 </tbody>
               </table>
             </div>
@@ -1126,120 +1153,35 @@ function renderPredictionConsultation() {
       });
       m += `</div></section>`;
     }
-
+    
     if (Object.keys(classMap).length > 0) {
-      const officialSet = new Set();
-      participants.forEach(p => {
-         const r = backtestData.participants[p.name];
-         if (r && r[phaseKey]?.class_details) {
-            r[phaseKey].class_details.forEach(c => {
-               if (c.official && c.official !== "—" && c.official !== "-") officialSet.add(c.official);
-            });
-         }
+      m += `<section style="margin-bottom: 40px;"><h2 style="margin-bottom: 20px;">${phaseTitle} - Classificados</h2><div class="predictions-consultation" style="gap: 20px;">`;
+      Object.entries(classMap).forEach(([idx, data]) => {
+        m += `
+          <article class="prediction-consult-card">
+            <div class="prediction-consult-header">
+              <div><strong>Vaga ${parseInt(idx)+1}</strong><p class="muted">Oficial: <strong>${data.official || '-'}</strong></p></div>
+            </div>
+            <div class="table-wrap">
+              <table class="dashboard-table compact-table">
+                <thead><tr><th>Palpiteiro</th><th>Palpite</th><th>Status</th></tr></thead>
+                <tbody>
+                  ${data.predictions.map(p => `<tr><td><strong>${p.name}</strong></td><td>${p.pick}</td><td>${p.hit ? '<span class="result-chip exact">Acertou</span>' : '<span class="result-chip miss">Errou</span>'}</td></tr>`).join("")}
+                </tbody>
+              </table>
+            </div>
+          </article>
+        `;
       });
-      const officialList = Array.from(officialSet);
-
-      m += `
-        <section style="margin-bottom: 40px;">
-          <h2 style="margin-bottom: 8px;">${phaseTitle} - Classificados</h2>
-          <p style="margin-bottom: 20px; font-size: 0.9rem;" class="muted"><strong style="color: var(--text);">Oficiais:</strong> ${officialList.length > 0 ? officialList.join(", ") : "Ainda não definidos"}</p>
-          <div class="predictions-consultation" style="gap: 20px;">
-            <article class="prediction-consult-card">
-              <div class="table-wrap">
-                <table class="dashboard-table compact-table">
-                  <thead><tr><th>Palpiteiro</th><th>Acertos</th><th colspan="8">Palpites Enviados (8 times)</th></tr></thead>
-                  <tbody>
-                    ${participants.filter((p) => backtestData.participants[p.name]).map((p) => {
-                      const cDetails = backtestData.participants[p.name][phaseKey].class_details || [];
-                      const hits = cDetails.filter(c => c.hit).length;
-                      return `<tr><td><strong>${p.name}</strong></td><td><strong style="color: var(--accent);">${hits}/8</strong></td>
-                        ${cDetails.map(c => `<td><span style="color: ${c.hit ? 'var(--accent-strong)' : 'var(--danger)'};">${c.pick || "-"} ${c.hit ? "✅" : "❌"}</span></td>`).join("")}
-                        ${Array.from({length: Math.max(0, 8 - cDetails.length)}).map(() => `<td>-</td>`).join("")}
-                      </tr>`;
-                    }).join("")}
-                  </tbody>
-                </table>
-              </div>
-            </article>
-          </div>
-        </section>
-      `;
+      m += `</div></section>`;
     }
     return m;
   };
 
-  const buildLeaguePhase = () => {
-    if (!leaguePhaseData?.records) return "<p>Dados da primeira fase indisponíveis.</p>";
-    let m = "";
-    const matches = leaguePhaseData.records.filter(r => r.matchday.includes("Machtday"));
-    
-    m += `<section style="margin-bottom: 40px;"><h2 style="margin-bottom: 20px;">Primeira Fase - Jogos</h2><div class="predictions-consultation" style="gap: 20px;">`;
-    
-    matches.forEach((match, idx) => {
-      m += `
-        <article class="prediction-consult-card">
-          <div class="prediction-consult-header">
-            <div><strong>Jogo ${idx + 1} (${match.matchday})</strong><p class="muted">Oficial Vencedor/Empate: <strong>${match.official || "-"}</strong></p></div>
-          </div>
-          <div class="table-wrap" style="max-height: 300px; overflow-y: auto;">
-            <table class="dashboard-table compact-table">
-              <thead><tr><th>Palpiteiro</th><th>Palpite</th><th>Status</th></tr></thead>
-              <tbody>
-                ${match.picks.map(p => {
-                  const hit = p.pick === match.official;
-                  return `<tr><td><strong>${p.participant}</strong></td><td>${p.pick}</td><td>${hit ? '<span class="result-chip exact">Acertou</span>' : '<span class="result-chip miss">Errou</span>'}</td></tr>`;
-                }).join("")}
-              </tbody>
-            </table>
-          </div>
-        </article>
-      `;
-    });
-    
-    m += `</div></section>`;
-    return m;
-  };
-
-  const buildClass8Phase = () => {
-    if (!leaguePhaseData?.records) return "<p>Dados da primeira fase indisponíveis.</p>";
-    let m = "";
-    const classRecords = leaguePhaseData.records.filter(r => r.matchday.includes("Classificado"));
-    
-    m += `<section style="margin-bottom: 40px;"><h2 style="margin-bottom: 20px;">Top 8 Classificados - Palpites</h2><div class="predictions-consultation" style="gap: 20px;">`;
-    
-    classRecords.forEach((record, idx) => {
-      m += `
-        <article class="prediction-consult-card">
-          <div class="prediction-consult-header">
-            <div><strong>Top 8 - Vaga ${idx + 1}</strong><p class="muted">Time Oficial: <strong>${record.official || "-"}</strong></p></div>
-          </div>
-          <div class="table-wrap" style="max-height: 300px; overflow-y: auto;">
-            <table class="dashboard-table compact-table">
-              <thead><tr><th>Palpiteiro</th><th>Palpite</th><th>Status</th></tr></thead>
-              <tbody>
-                ${record.picks.map(p => {
-                  const hit = p.pick === record.official;
-                  return `<tr><td><strong>${p.participant}</strong></td><td>${p.pick}</td><td>${hit ? '<span class="result-chip exact">Acertou</span>' : '<span class="result-chip miss">Errou</span>'}</td></tr>`;
-                }).join("")}
-              </tbody>
-            </table>
-          </div>
-        </article>
-      `;
-    });
-    
-    m += `</div></section>`;
-    return m;
-  };
-
   if (activeConsultTab === 'playoff') {
-    markup += buildKnockoutPhase('playoff', 'Playoff 1ª fase');
+    markup += buildKnockoutPhase('PLAYOFF', 'Playoff 1ª fase');
   } else if (activeConsultTab === 'oitavas') {
-    markup += buildKnockoutPhase('round_of_16', 'Oitavas de Final');
-  } else if (activeConsultTab === 'primeira') {
-    markup += buildLeaguePhase();
-  } else if (activeConsultTab === 'class8') {
-    markup += buildClass8Phase();
+    markup += buildKnockoutPhase('ROUND_OF_16', 'Oitavas de Final');
   }
 
   predictionsConsultationEl.innerHTML = markup;
@@ -1326,6 +1268,28 @@ async function loadQuarterFinalsFormsData() {
   }
 }
 
+async function loadMatchesData() {
+  try {
+    const response = await fetch("./api/matches.json", { cache: "no-store" });
+    if (!response.ok) throw new Error("Falha api/matches.json");
+    const data = await response.json();
+    knockoutResults = data.matches.map(m => ({
+      id: m.id.toString(),
+      phase: m.phase_key,
+      roundLabel: m.round_label,
+      kickoff: m.kickoff_utc,
+      homeTeam: m.home_team_name,
+      awayTeam: m.away_team_name,
+      scoreFinal: { home: m.score_home_90, away: m.score_away_90 },
+      aggregate: m.score_home_90 !== null ? `${m.score_home_90}-${m.score_away_90}` : null,
+      qualified: m.qualified_team_name,
+    }));
+  } catch (e) {
+    console.error(e);
+    knockoutResults = [];
+  }
+}
+
 loginForm.addEventListener("submit", (event) => {
   event.preventDefault();
   const participant = getParticipantByName(loginUser.value);
@@ -1383,3 +1347,4 @@ loadLeaguePhaseData().then(renderApp);
 loadSuperclassicData().then(renderApp);
 loadBacktestData().then(renderApp);
 loadQuarterFinalsFormsData().then(renderApp);
+loadMatchesData().then(renderApp);
