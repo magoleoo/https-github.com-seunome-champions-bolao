@@ -19,7 +19,6 @@ const {
 
 const storageKeys = {
   session: "ucl-bolao-session",
-  manualSuperclassics: "ucl-bolao-manual-superclassics",
   qfDrafts: "ucl-bolao-qf-drafts",
 };
 
@@ -76,28 +75,8 @@ if (!localStorage.getItem("ucl-bolao-guest") && !currentUserId) {
   localStorage.setItem("ucl-bolao-guest", "1");
 }
 let leaguePhaseData = null;
-let superclassicData = null;
 let backtestData = null;
 let quarterFinalsFormsData = null;
-let manualSuperclassicIds = new Set(loadManualSuperclassicIds());
-
-function loadManualSuperclassicIds() {
-  try {
-    const raw = localStorage.getItem(storageKeys.manualSuperclassics);
-    const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch (error) {
-    console.error("Falha ao ler superclássicos salvos no navegador.", error);
-    return [];
-  }
-}
-
-function saveManualSuperclassicIds() {
-  localStorage.setItem(
-    storageKeys.manualSuperclassics,
-    JSON.stringify([...manualSuperclassicIds])
-  );
-}
 
 function getParticipantById(id) {
   return participants.find((participant) => participant.id === id);
@@ -174,6 +153,133 @@ function isEligibleSuperclassicMatch(homeTeam, awayTeam) {
   );
 }
 
+const superclassicPhaseOrder = ["LEAGUE", "PLAYOFF", "ROUND_OF_16", "QUARTER"];
+
+function normalizeScoreToken(value) {
+  const text = String(value || "").trim();
+  const match = text.match(/^(\d+)\s*[xX-]\s*(\d+)$/);
+  if (!match) return "";
+  return `${match[1]}x${match[2]}`;
+}
+
+function splitFixtureLabel(label) {
+  if (!label || !label.includes(" x ")) return null;
+  const [homeTeam, awayTeam] = label.split(" x ");
+  if (!homeTeam || !awayTeam) return null;
+  return {
+    homeTeam: homeTeam.trim(),
+    awayTeam: awayTeam.trim(),
+  };
+}
+
+function normalizeSuperclassicPicks(rawPicks) {
+  return (rawPicks || [])
+    .map((pick) => ({
+      participant: String(pick?.participant || "").trim(),
+      pick: normalizeScoreToken(pick?.pick),
+    }))
+    .filter((pick) => pick.participant && pick.pick);
+}
+
+function buildAutomaticSuperclassicFixtures() {
+  const fixturesByKey = new Map();
+
+  const upsertFixture = ({ phase, phaseDetail, title, official, picks }) => {
+    const key = `${phase}::${normalizeText(phaseDetail || "")}::${normalizeText(title)}`;
+    const existing = fixturesByKey.get(key);
+
+    if (!existing) {
+      fixturesByKey.set(key, {
+        key,
+        phase,
+        phaseDetail,
+        title,
+        official: official || "",
+        picks: [...(picks || [])],
+      });
+      return;
+    }
+
+    if (!existing.official && official) {
+      existing.official = official;
+    }
+
+    const merged = new Map(
+      (existing.picks || []).map((pick) => [normalizeText(pick.participant), pick])
+    );
+    (picks || []).forEach((pick) => {
+      merged.set(normalizeText(pick.participant), pick);
+    });
+    existing.picks = [...merged.values()].sort((a, b) =>
+      a.participant.localeCompare(b.participant, "pt-BR")
+    );
+  };
+
+  superclassicPhaseOrder.forEach((phaseKey) => {
+    if (!superclassicEligiblePhases.has(phaseKey)) return;
+    const fixtures = backtestData?.phases?.[phaseKey]?.fixtures || [];
+
+    fixtures.forEach((fixture) => {
+      const parsed = splitFixtureLabel(fixture.label);
+      if (!parsed) return;
+      if (!isEligibleSuperclassicMatch(parsed.homeTeam, parsed.awayTeam)) return;
+
+      let phaseDetail = phaseRules[phaseKey]?.label || phaseKey;
+      const matchday = String(fixture.matchday || "").replace("Machtday", "Matchday");
+      const leg = String(fixture.leg || "").trim();
+      if (phaseKey === "LEAGUE" && matchday) phaseDetail = matchday;
+      if (leg) phaseDetail = `${phaseDetail} • ${leg.toUpperCase()}`;
+
+      upsertFixture({
+        phase: phaseKey,
+        phaseDetail,
+        title: `${parsed.homeTeam} x ${parsed.awayTeam}`,
+        official: normalizeScoreToken(fixture.official),
+        picks: normalizeSuperclassicPicks(fixture.picks),
+      });
+    });
+  });
+
+  (knockoutResults || []).forEach((match) => {
+    if (!superclassicEligiblePhases.has(match.phase)) return;
+    if (!isEligibleSuperclassicMatch(match.homeTeam, match.awayTeam)) return;
+
+    const title = `${match.homeTeam} x ${match.awayTeam}`;
+    let phaseDetail = match.roundLabel || phaseRules[match.phase]?.label || match.phase;
+    const legMatch = String(match.roundLabel || "").match(/\b(ida|volta)\b/i);
+    if (legMatch) {
+      phaseDetail = `${phaseRules[match.phase]?.label || match.phase} • ${legMatch[1].toUpperCase()}`;
+    }
+
+    const hasScore =
+      typeof match?.scoreFinal?.home === "number" && typeof match?.scoreFinal?.away === "number";
+    const official = hasScore ? `${match.scoreFinal.home}x${match.scoreFinal.away}` : "";
+
+    upsertFixture({
+      phase: match.phase,
+      phaseDetail,
+      title,
+      official,
+      picks: [],
+    });
+  });
+
+  const fixtures = [...fixturesByKey.values()];
+  fixtures.sort((a, b) => {
+    const phaseDiff = superclassicPhaseOrder.indexOf(a.phase) - superclassicPhaseOrder.indexOf(b.phase);
+    if (phaseDiff !== 0) return phaseDiff;
+
+    if (a.phase === "LEAGUE") {
+      const aMd = Number((a.phaseDetail.match(/(\d+)/) || [])[1] || 0);
+      const bMd = Number((b.phaseDetail.match(/(\d+)/) || [])[1] || 0);
+      if (aMd !== bMd) return aMd - bMd;
+    }
+    return a.title.localeCompare(b.title, "pt-BR");
+  });
+
+  return fixtures;
+}
+
 function getParticipantByName(name) {
   const normalized = normalizeText(name);
   return participants.find((participant) => normalizeText(participant.name) === normalized);
@@ -236,14 +342,6 @@ function createLeagueMatchId(matchday, index) {
   return `league:${matchday}:${index + 1}`;
 }
 
-function createLeagueMatchTitle(match) {
-  return `${match.matchday} • ${match.homeTeam} x ${match.awayTeam}`;
-}
-
-function createKnockoutMatchTitle(match) {
-  return `${match.homeTeam} x ${match.awayTeam}`;
-}
-
 function renderPredictionHighlightList(label, names, tone) {
   if (!names?.length) {
     return `
@@ -266,56 +364,6 @@ function renderPredictionHighlightList(label, names, tone) {
       </div>
     </div>
   `;
-}
-
-function isManualSuperclassic(matchId) {
-  return manualSuperclassicIds.has(matchId);
-}
-
-function toggleManualSuperclassic(matchId) {
-  if (manualSuperclassicIds.has(matchId)) {
-    manualSuperclassicIds.delete(matchId);
-  } else {
-    manualSuperclassicIds.add(matchId);
-  }
-  saveManualSuperclassicIds();
-  renderMatches();
-  renderSuperclassicPanel();
-}
-
-function getManualSuperclassicEntries() {
-  const entries = [];
-
-  const groupedLeagueMatches = leaguePhaseResults.reduce((acc, match) => {
-    if (!acc[match.matchday]) acc[match.matchday] = [];
-    acc[match.matchday].push(match);
-    return acc;
-  }, {});
-
-  Object.entries(groupedLeagueMatches).forEach(([matchday, matches]) => {
-    matches.forEach((match, index) => {
-      const id = createLeagueMatchId(matchday, index);
-      if (!isManualSuperclassic(id)) return;
-      entries.push({
-        id,
-        phase: "Primeira fase",
-        title: createLeagueMatchTitle(match),
-        detail: `Resultado oficial: ${match.scoreFinal.home} x ${match.scoreFinal.away}`,
-      });
-    });
-  });
-
-  knockoutResults.forEach((match) => {
-    if (!isManualSuperclassic(match.id)) return;
-    entries.push({
-      id: match.id,
-      phase: phaseRules[match.phase]?.label || match.phase,
-      title: createKnockoutMatchTitle(match),
-      detail: `${match.roundLabel} • ${formatKickoff(match.kickoff)}`,
-    });
-  });
-
-  return entries;
 }
 
 function competitionLogoMarkup() {
@@ -487,9 +535,9 @@ function renderMatches() {
   `;
 
   const renderMatchCard = (match, meta = {}) => {
-    const matchId = meta.matchId || match.id;
-    const superclassic = isManualSuperclassic(matchId);
     const superclassicEligible = superclassicEligiblePhases.has(match.phase);
+    const superclassic =
+      superclassicEligible && isEligibleSuperclassicMatch(match.homeTeam, match.awayTeam);
     const hasScore =
       typeof match?.scoreFinal?.home === "number" && typeof match?.scoreFinal?.away === "number";
     const status = meta.statusLabel || match.status || (hasScore ? "Finalizado" : "Agendado");
@@ -505,15 +553,7 @@ function renderMatches() {
           <span class="tag ${hasScore ? "status-finished" : ""}">${status}</span>
           <div class="match-header-tags">
             ${superclassic ? `<span class="tag">Superclássico</span>` : ""}
-            ${
-              superclassicEligible
-                ? `
-            <button type="button" class="superclassic-toggle" data-superclassic-id="${matchId}">
-              ${superclassic ? "Remover superclássico" : "Marcar superclássico"}
-            </button>
-            `
-                : ""
-            }
+            ${superclassicEligible && !superclassic ? `<span class="tag">Elegível</span>` : ""}
           </div>
         </div>
         <div class="teams">
@@ -779,42 +819,16 @@ function renderRulesPanel() {
 }
 
 function renderSuperclassicPanel() {
-  const manualEntries = getManualSuperclassicEntries();
-  const blocks = (superclassicData?.blocks || []).filter(
-    (block) => block.matches?.length && block.submissions?.length
-  );
-
-  if (!blocks.length && !manualEntries.length) {
+  const fixtures = buildAutomaticSuperclassicFixtures();
+  if (!fixtures.length) {
     superclassicPanel.innerHTML = `
       <article class="rules-card">
         <h3>Superclássicos</h3>
-        <p class="muted">Nenhum bloco de superclássico estruturado ainda.</p>
+        <p class="muted">Nenhum confronto elegível encontrado nas fases com pontuação de superclássico.</p>
       </article>
     `;
     return;
   }
-
-  const manualMarkup = manualEntries.length
-    ? `
-      <article class="rules-card">
-        <h3>Seleção manual no app</h3>
-        <p class="muted">Clique nos jogos da aba Resultados para definir quais confrontos entram como superclássico.</p>
-        <div class="superclassic-manual-grid">
-          ${manualEntries
-            .map(
-              (entry) => `
-                <article class="league-row-card is-superclassic">
-                  <p class="eyebrow">${entry.phase}</p>
-                  <strong>${entry.title}</strong>
-                  <span class="muted">${entry.detail}</span>
-                </article>
-              `
-            )
-            .join("")}
-        </div>
-      </article>
-    `
-    : "";
 
   const matrixStyles = `
     <style>
@@ -845,101 +859,32 @@ function renderSuperclassicPanel() {
     return nameA.localeCompare(nameB, "pt-BR");
   };
 
-  const buildResultLookupKey = (homeTeam, awayTeam) =>
-    `${canonicalTeamKey(homeTeam)}::${canonicalTeamKey(awayTeam)}`;
-
-  const officialResultByFixture = new Map();
-  const registerOfficialResult = (match) => {
-    const home = match?.scoreFinal?.home;
-    const away = match?.scoreFinal?.away;
-    if (typeof home !== "number" || typeof away !== "number") return;
-    const key = buildResultLookupKey(match.homeTeam, match.awayTeam);
-    officialResultByFixture.set(key, `${home}x${away}`);
-  };
-
-  (knockoutResults || []).forEach(registerOfficialResult);
-  (leaguePhaseResults || []).forEach(registerOfficialResult);
-
-  const getOfficialResultForMatchTitle = (title) => {
-    if (!title || !title.includes(" x ")) return "";
-    const [homeTeam, awayTeam] = title.split(" x ");
-    const key = buildResultLookupKey(homeTeam, awayTeam);
-    return officialResultByFixture.get(key) || "";
-  };
-
-  const autoDetectedSuperclassics = [];
-
-  const leagueByMatchday = (leaguePhaseResults || []).reduce((acc, match) => {
-    if (!acc[match.matchday]) acc[match.matchday] = [];
-    acc[match.matchday].push(match);
-    return acc;
-  }, {});
-
-  Object.entries(leagueByMatchday).forEach(([matchday, matches]) => {
-    matches.forEach((match, index) => {
-      if (!isEligibleSuperclassicMatch(match.homeTeam, match.awayTeam)) return;
-      autoDetectedSuperclassics.push({
-        id: createLeagueMatchId(matchday, index),
-        title: `${match.homeTeam} x ${match.awayTeam}`,
-        phase: matchday.replace("Matchday", "Rodada"),
-        official:
-          typeof match?.scoreFinal?.home === "number" && typeof match?.scoreFinal?.away === "number"
-            ? `${match.scoreFinal.home}x${match.scoreFinal.away}`
-            : "",
-      });
-    });
-  });
-
-  (knockoutResults || [])
-    .filter((match) => superclassicEligiblePhases.has(match.phase))
-    .forEach((match) => {
-      if (!isEligibleSuperclassicMatch(match.homeTeam, match.awayTeam)) return;
-      autoDetectedSuperclassics.push({
-        id: String(match.id),
-        title: `${match.homeTeam} x ${match.awayTeam}`,
-        phase: match.roundLabel || phaseRules[match.phase]?.label || match.phase,
-        official:
-          typeof match?.scoreFinal?.home === "number" && typeof match?.scoreFinal?.away === "number"
-            ? `${match.scoreFinal.home}x${match.scoreFinal.away}`
-            : "",
-      });
-    });
-
-  const existingSuperclassicTitles = new Set(
-    [
-      ...manualEntries.map((entry) => normalizeText(entry.title)),
-      ...blocks.flatMap((block) => (block.matches || []).map((match) => normalizeText(match.title))),
-    ]
-  );
-
-  const newAutoDetectedSuperclassics = autoDetectedSuperclassics.filter(
-    (match) => !existingSuperclassicTitles.has(normalizeText(match.title))
-  );
-
-  const renderSuperclassicMatrix = (block) => {
-    const matchCols = (block.matches || []).map((match) => ({
-      label: match.title,
-      key: normalizeText(match.title),
+  const renderSuperclassicMatrix = (phaseFixtures) => {
+    const matchCols = phaseFixtures.map((fixture) => ({
+      label: fixture.title,
+      detail: fixture.phaseDetail,
+      key: fixture.key,
+      official: fixture.official,
+      picks: fixture.picks || [],
     }));
 
     const picksByParticipant = new Map();
-    (block.submissions || []).forEach((submission) => {
-      const byTitle = new Map();
-      (submission.predictions || []).forEach((prediction) => {
-        const home = String(prediction.home || "").trim();
-        const away = String(prediction.away || "").trim();
-        if (home === "" || away === "") return;
-        byTitle.set(normalizeText(prediction.title || ""), `${home}x${away}`);
+    matchCols.forEach((match) => {
+      match.picks.forEach((pick) => {
+        if (!picksByParticipant.has(pick.participant)) {
+          picksByParticipant.set(pick.participant, new Map());
+        }
+        picksByParticipant.get(pick.participant).set(match.key, pick.pick);
       });
-      if (submission.participant) {
-        picksByParticipant.set(submission.participant, byTitle);
-      }
     });
 
-    const participantNames = Array.from(picksByParticipant.keys()).sort(sortParticipants);
-    const officialByMatch = new Map(
-      matchCols.map((match) => [match.key, getOfficialResultForMatchTitle(match.label)])
-    );
+    const knownParticipants = participants.map((participant) => participant.name);
+    const knownParticipantsNormalized = new Set(knownParticipants.map(normalizeText));
+    const extraParticipants = Array.from(picksByParticipant.keys())
+      .filter((name) => !knownParticipantsNormalized.has(normalizeText(name)))
+      .sort(sortParticipants);
+    const participantNames = [...knownParticipants, ...extraParticipants];
+    const officialByMatch = new Map(matchCols.map((match) => [match.key, match.official]));
 
     const exactSummaryMarkup = `
       <div class="superclassic-exact-summary">
@@ -978,6 +923,25 @@ function renderSuperclassicPanel() {
       </div>
     `;
 
+    const hasAnyPicks = matchCols.some((match) => match.picks.length > 0);
+    if (!hasAnyPicks) {
+      return `
+        <div class="superclassic-manual-grid">
+          ${matchCols
+            .map(
+              (match) => `
+                <article class="league-row-card is-superclassic">
+                  <p class="eyebrow">${match.detail}</p>
+                  <strong>${match.label}</strong>
+                  <span class="muted">Resultado oficial: ${match.official || "pendente"}</span>
+                </article>
+              `
+            )
+            .join("")}
+        </div>
+      `;
+    }
+
     return `
       <div class="table-wrapper">
         <table class="predictions-matrix-table">
@@ -988,7 +952,7 @@ function renderSuperclassicPanel() {
                 .map(
                   (match) => `
                     <th>
-                      <div style="font-size:0.7rem; color:var(--clr-text-muted); margin-bottom:4px;">Superclássico</div>
+                      <div style="font-size:0.7rem; color:var(--clr-text-muted); margin-bottom:4px;">${match.detail}</div>
                       <div style="margin-bottom:8px;">${match.label}</div>
                       ${
                         officialByMatch.get(match.key)
@@ -1042,51 +1006,41 @@ function renderSuperclassicPanel() {
     `;
   };
 
-  const blockMarkup = blocks
+  const fixturesByPhase = superclassicPhaseOrder.reduce((acc, phaseKey) => {
+    acc[phaseKey] = fixtures.filter((fixture) => fixture.phase === phaseKey);
+    return acc;
+  }, {});
+
+  const overviewMarkup = `
+    <article class="rules-card">
+      <h3>Confrontos superclássicos elegíveis</h3>
+      <p class="muted">Aplicação automática nas fases 1ª fase, playoff, oitavas e quartas.</p>
+      <div class="result-chip-row" style="margin-top:10px;">
+        ${superclassicPhaseOrder
+          .filter((phaseKey) => (fixturesByPhase[phaseKey] || []).length > 0)
+          .map(
+            (phaseKey) =>
+              `<span class="result-chip exact">${phaseRules[phaseKey]?.label || phaseKey}: ${(fixturesByPhase[phaseKey] || []).length}</span>`
+          )
+          .join("")}
+      </div>
+    </article>
+  `;
+
+  const blockMarkup = superclassicPhaseOrder
+    .filter((phaseKey) => (fixturesByPhase[phaseKey] || []).length > 0)
     .map(
-      (block, index) => `
+      (phaseKey) => `
         <article class="rules-card">
-          <h3>Bloco ${index + 1}</h3>
-          <p class="muted">${block.matches.map((match) => match.title).join(" • ")}</p>
-          ${renderSuperclassicMatrix(block)}
+          <h3>${phaseRules[phaseKey]?.label || phaseKey}</h3>
+          <p class="muted">${(fixturesByPhase[phaseKey] || []).length} confronto(s) elegível(is).</p>
+          ${renderSuperclassicMatrix(fixturesByPhase[phaseKey] || [])}
         </article>
       `
     )
     .join("");
 
-  const autoScanMarkup = autoDetectedSuperclassics.length
-    ? `
-      <article class="rules-card">
-        <h3>Varredura automática de superclássicos</h3>
-        <p class="muted">Times elegíveis: Real Madrid, Barcelona, Bayern de Munique, Manchester City, Liverpool, Chelsea e Paris Saint-Germain.</p>
-        <div class="result-chip-row" style="margin-bottom:12px;">
-          <span class="result-chip exact">Total encontrados: ${autoDetectedSuperclassics.length}</span>
-          <span class="result-chip ${newAutoDetectedSuperclassics.length ? "trend" : "hit"}">Novos não cadastrados: ${newAutoDetectedSuperclassics.length}</span>
-        </div>
-        ${
-          newAutoDetectedSuperclassics.length
-            ? `
-              <div class="superclassic-manual-grid">
-                ${newAutoDetectedSuperclassics
-                  .map(
-                    (match) => `
-                      <article class="league-row-card is-superclassic">
-                        <p class="eyebrow">${match.phase}</p>
-                        <strong>${match.title}</strong>
-                        <span class="muted">Resultado oficial: ${match.official || "pendente"}</span>
-                      </article>
-                    `
-                  )
-                  .join("")}
-              </div>
-            `
-            : `<p class="muted">Nenhum superclássico adicional fora dos blocos já cadastrados na aba.</p>`
-        }
-      </article>
-    `
-    : "";
-
-  superclassicPanel.innerHTML = `${matrixStyles}${manualMarkup}${autoScanMarkup}${blockMarkup}`;
+  superclassicPanel.innerHTML = `${matrixStyles}${overviewMarkup}${blockMarkup}`;
 }
 
 function setActiveTab(tab) {
@@ -1599,7 +1553,6 @@ function renderApp() {
 function loadImmediateData() {
   backtestData = window.backtestData || { ranking: [] };
   leaguePhaseData = window.leaguePhaseData || { records: [] };
-  superclassicData = window.superclassicData || { blocks: [] };
   if (window.apiMatchesData?.matches?.length) {
     knockoutResults = window.apiMatchesData.matches.map(m => ({
       id: m.id.toString(),
@@ -1679,14 +1632,6 @@ skipLoginButton.addEventListener("click", () => {
   if (loginPassword) loginPassword.value = "";
   renderApp();
 });
-
-if (matchesGrid) {
-  matchesGrid.addEventListener("click", (event) => {
-    const toggleButton = event.target.closest("[data-superclassic-id]");
-    if (!toggleButton) return;
-    toggleManualSuperclassic(toggleButton.dataset.superclassicId);
-  });
-}
 
 tabRanking.addEventListener("click", () => setActiveTab("ranking"));
 tabResults.addEventListener("click", () => setActiveTab("results"));
