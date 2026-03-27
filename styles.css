@@ -980,31 +980,6 @@ option {
   letter-spacing: 0.04em;
 }
 
-.superclassic-toggle {
-  width: 100%;
-  margin-top: 12px;
-  border: 1px solid rgba(255, 200, 0, 0.28);
-  border-radius: 14px;
-  padding: 12px 14px;
-  cursor: pointer;
-  color: var(--text);
-  background: rgba(255, 200, 0, 0.08);
-  transition: transform 150ms ease, background 150ms ease, border-color 150ms ease;
-}
-
-.match-card .superclassic-toggle {
-  width: auto;
-  margin-top: 0;
-  padding: 8px 12px;
-  font-size: 0.82rem;
-}
-
-.superclassic-toggle:hover {
-  transform: translateY(-1px);
-  background: rgba(255, 200, 0, 0.12);
-  border-color: rgba(255, 200, 0, 0.42);
-}
-
 .superclassic-manual-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
