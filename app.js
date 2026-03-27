@@ -1074,11 +1074,14 @@ function renderSuperclassicPanel() {
       .predictions-matrix-table td.participant-name { text-align: left; font-weight: bold; background: var(--clr-surface-100); position: sticky; left: 0; z-index: 2; width: 150px;}
       .table-wrapper { overflow-x: auto; max-width: 100%; border-radius: 8px; border: 1px solid var(--clr-surface-300); }
       .superclassic-pick-cell { background: rgba(255, 200, 0, 0.1); color: #ffe6a0; font-weight: 600; }
+      .superclassic-trend-hit { background: rgba(59, 201, 114, 0.12); color: #d8f3dc; font-weight: 650; box-shadow: inset 0 0 0 1px rgba(59, 201, 114, 0.2); }
       .superclassic-exact-hit { background: rgba(59, 201, 114, 0.16); color: #d8f3dc; font-weight: 700; box-shadow: inset 0 0 0 1px rgba(59, 201, 114, 0.28); }
       .superclassic-exact-mark { display: block; margin-top: 4px; font-size: 0.68rem; letter-spacing: 0.06em; text-transform: uppercase; color: #86efac; }
+      .superclassic-trend-mark { display: block; margin-top: 4px; font-size: 0.68rem; letter-spacing: 0.06em; text-transform: uppercase; color: #bbf7d0; }
       .superclassic-official-pill { display: inline-block; background: rgba(59, 201, 114, 0.2); color: #d8f3dc; padding: 2px 8px; border-radius: 12px; border: 1px solid rgba(59, 201, 114, 0.32); }
       .superclassic-official-pending { display: inline-block; background: rgba(255, 255, 255, 0.08); color: var(--clr-text-muted); padding: 2px 8px; border-radius: 12px; border: 1px solid var(--clr-surface-300); }
       .superclassic-exact-summary { margin-top: 14px; display: grid; gap: 10px; }
+      .superclassic-official-row td { background: rgba(255, 255, 255, 0.03); font-weight: 600; }
     </style>
   `;
 
@@ -1093,6 +1096,160 @@ function renderSuperclassicPanel() {
     if (typeof posA === "number") return -1;
     if (typeof posB === "number") return 1;
     return nameA.localeCompare(nameB, "pt-BR");
+  };
+
+  const drawTokens = new Set(["empate", "draw", "x", "igual"]);
+  const parseScoreToken = (token) => {
+    const normalized = normalizeScoreToken(token);
+    if (!normalized) return null;
+    const [homeRaw, awayRaw] = normalized.split("x");
+    const home = Number(homeRaw);
+    const away = Number(awayRaw);
+    if (!Number.isFinite(home) || !Number.isFinite(away)) return null;
+    return { home, away, token: normalized };
+  };
+  const resolveLeagueHitType = (fixture, pick) => {
+    const pickText = String(pick || "").trim();
+    const officialScore = parseScoreToken(fixture.official);
+    if (!pickText || !officialScore) return "";
+
+    const pickScore = parseScoreToken(pickText);
+    if (pickScore && pickScore.token === officialScore.token) return "exact";
+
+    const officialResult = matchResultFromScores(officialScore.home, officialScore.away);
+    if (!officialResult) return "";
+
+    let predictedResult = null;
+    if (pickScore) {
+      predictedResult = matchResultFromScores(pickScore.home, pickScore.away);
+    } else {
+      const fixtureTeams = splitFixtureLabel(fixture.title) || { homeTeam: "", awayTeam: "" };
+      const normalizedPick = normalizeText(pickText);
+      if (drawTokens.has(normalizedPick)) {
+        predictedResult = "DRAW";
+      } else if (compareNormalizedNames(pickText, fixtureTeams.homeTeam)) {
+        predictedResult = "HOME";
+      } else if (compareNormalizedNames(pickText, fixtureTeams.awayTeam)) {
+        predictedResult = "AWAY";
+      }
+    }
+
+    return predictedResult && predictedResult === officialResult ? "trend" : "";
+  };
+
+  const renderLeagueSuperclassicTable = (phaseFixtures) => {
+    if (!phaseFixtures.length) return "";
+
+    const matchCols = phaseFixtures.map((fixture) => ({
+      key: fixture.key,
+      label: fixture.title,
+      detail: fixture.phaseDetail,
+      official: fixture.official,
+      picks: fixture.picks || [],
+    }));
+
+    const picksByParticipant = new Map();
+    matchCols.forEach((match) => {
+      match.picks.forEach((pick) => {
+        if (!picksByParticipant.has(pick.participant)) {
+          picksByParticipant.set(pick.participant, new Map());
+        }
+        picksByParticipant.get(pick.participant).set(match.key, pick.pick);
+      });
+    });
+
+    const knownParticipants = participants.map((participant) => participant.name);
+    const knownParticipantsNormalized = new Set(knownParticipants.map(normalizeText));
+    const extraParticipants = Array.from(picksByParticipant.keys())
+      .filter((name) => !knownParticipantsNormalized.has(normalizeText(name)))
+      .sort(sortParticipants);
+    const participantNames = [...knownParticipants, ...extraParticipants];
+
+    return `
+      <article class="rules-card">
+        <h3>Primeira fase: palpites e resultados dos superclássicos</h3>
+        <p class="muted">${matchCols.length} jogo(s) em tabela única.</p>
+        <div class="table-wrapper">
+          <table class="predictions-matrix-table">
+            <thead>
+              <tr>
+                <th class="participant-name">Participante</th>
+                ${matchCols
+                  .map(
+                    (match, index) => `
+                      <th>
+                        <div style="font-size:0.7rem; color:var(--clr-text-muted); margin-bottom:4px;">Jogo ${index + 1}</div>
+                        <div style="margin-bottom:8px;">${match.label}</div>
+                        ${
+                          match.official
+                            ? `<div class="superclassic-official-pill">Oficial: ${match.official}</div>`
+                            : `<div class="superclassic-official-pending">Oficial pendente</div>`
+                        }
+                      </th>
+                    `
+                  )
+                  .join("")}
+              </tr>
+            </thead>
+            <tbody>
+              <tr class="superclassic-official-row">
+                <td class="participant-name">Resultado oficial</td>
+                ${matchCols
+                  .map(
+                    (match) => `
+                      <td>
+                        ${match.official || "-"}
+                      </td>
+                    `
+                  )
+                  .join("")}
+              </tr>
+              ${participantNames
+                .map((participantName) => {
+                  const picksByMatch = picksByParticipant.get(participantName) || new Map();
+                  return `
+                    <tr>
+                      <td class="participant-name">
+                        <div style="display:flex; align-items:center; gap:8px;">
+                          <div style="width:24px; height:24px; border-radius:50%; background:var(--clr-surface-300); display:flex; align-items:center; justify-content:center; font-size:0.7rem;">${participantName.charAt(0)}</div>
+                          ${participantName}
+                        </div>
+                      </td>
+                      ${matchCols
+                        .map((match) => {
+                          const pick = picksByMatch.get(match.key) || "-";
+                          const hitType = resolveLeagueHitType(match, pick);
+                          const className = pick === "-"
+                            ? ""
+                            : hitType === "exact"
+                              ? "superclassic-exact-hit"
+                              : hitType === "trend"
+                                ? "superclassic-trend-hit"
+                                : "superclassic-pick-cell";
+
+                          return `
+                            <td class="${className}">
+                              ${pick}
+                              ${
+                                hitType === "exact"
+                                  ? `<span class="superclassic-exact-mark">Placar exato</span>`
+                                  : hitType === "trend"
+                                    ? `<span class="superclassic-trend-mark">Tendência</span>`
+                                    : ""
+                              }
+                            </td>
+                          `;
+                        })
+                        .join("")}
+                    </tr>
+                  `;
+                })
+                .join("")}
+            </tbody>
+          </table>
+        </div>
+      </article>
+    `;
   };
 
   const renderSuperclassicMatrix = (phaseFixtures) => {
@@ -1342,8 +1499,10 @@ function renderSuperclassicPanel() {
     </article>
   `;
 
+  const leagueTableMarkup = renderLeagueSuperclassicTable(leagueFixtures);
+
   const blockMarkup = superclassicPhaseOrder
-    .filter((phaseKey) => (fixturesByPhase[phaseKey] || []).length > 0)
+    .filter((phaseKey) => phaseKey !== "LEAGUE" && (fixturesByPhase[phaseKey] || []).length > 0)
     .map(
       (phaseKey) => `
         <article class="rules-card">
@@ -1355,7 +1514,7 @@ function renderSuperclassicPanel() {
     )
     .join("");
 
-  superclassicPanel.innerHTML = `${matrixStyles}${leagueFormMarkup}${overviewMarkup}${blockMarkup}`;
+  superclassicPanel.innerHTML = `${matrixStyles}${leagueFormMarkup}${leagueTableMarkup}${overviewMarkup}${blockMarkup}`;
 
   const leagueForm = superclassicPanel.querySelector("#league-superclassic-form");
   const leagueFeedback = superclassicPanel.querySelector("#league-superclassic-feedback");
