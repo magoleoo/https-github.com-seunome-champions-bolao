@@ -1488,6 +1488,20 @@ function renderSuperclassicPanel() {
     return predictedResult && predictedResult === officialResult ? "trend" : "";
   };
 
+  const resolveScoreHitType = (officialScoreText, pickText) => {
+    const officialScore = parseScoreToken(officialScoreText);
+    const predictedScore = parseScoreToken(pickText);
+    if (!officialScore || !predictedScore) return "";
+
+    if (officialScore.token === predictedScore.token) return "exact";
+
+    const officialResult = matchResultFromScores(officialScore.home, officialScore.away);
+    const predictedResult = matchResultFromScores(predictedScore.home, predictedScore.away);
+    if (!officialResult || !predictedResult) return "";
+
+    return officialResult === predictedResult ? "trend" : "";
+  };
+
   const renderLeagueSuperclassicTable = (phaseFixtures) => {
     if (!phaseFixtures.length) return "";
 
@@ -1729,16 +1743,24 @@ function renderSuperclassicPanel() {
                       .map((match) => {
                         const pick = picksByTitle.get(match.key) || "-";
                         const official = officialByMatch.get(match.key);
-                        const isExactHit = pick !== "-" && official && pick === official;
+                        const hitType = pick !== "-" ? resolveScoreHitType(official, pick) : "";
                         const className = pick === "-"
                           ? ""
-                          : isExactHit
+                          : hitType === "exact"
                             ? "superclassic-exact-hit"
+                            : hitType === "trend"
+                              ? "superclassic-trend-hit"
                             : "superclassic-pick-cell";
                         return `
                           <td class="${className}">
                             ${pick}
-                            ${isExactHit ? `<span class="superclassic-exact-mark">Placar exato</span>` : ""}
+                            ${
+                              hitType === "exact"
+                                ? `<span class="superclassic-exact-mark">Placar exato</span>`
+                                : hitType === "trend"
+                                  ? `<span class="superclassic-trend-mark">Tendência</span>`
+                                  : ""
+                            }
                           </td>
                         `;
                       })
