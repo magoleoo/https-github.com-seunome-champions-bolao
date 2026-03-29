@@ -1,0 +1,52 @@
+name: Live Scores Sync (API-Football)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/10 * * * *"
+
+jobs:
+  sync-live-scores:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Validar segredo da API
+        env:
+          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+        run: |
+          if [ -z "$API_FOOTBALL_KEY" ]; then
+            echo "API_FOOTBALL_KEY não configurada em Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+
+      - name: Sincronizar placares
+        env:
+          API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+          API_FOOTBALL_HOST: ${{ vars.API_FOOTBALL_HOST }}
+          API_FOOTBALL_BASE_URL: ${{ vars.API_FOOTBALL_BASE_URL }}
+          API_FOOTBALL_LEAGUE_ID: ${{ vars.API_FOOTBALL_LEAGUE_ID }}
+          API_FOOTBALL_SEASON: ${{ vars.UCL_API_SEASON }}
+        run: |
+          python tools/sync_api_matches.py
+
+      - name: Commit e push dos placares atualizados
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add api/matches.json api/matches.js
+          if git diff --cached --quiet; then
+            echo "Sem alterações em placares."
+            exit 0
+          fi
+          git commit -m "auto(scores): sincroniza placares da Champions via API-Football"
+          git push
