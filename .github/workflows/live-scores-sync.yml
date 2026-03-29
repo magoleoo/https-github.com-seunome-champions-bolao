@@ -1,4 +1,4 @@
-name: Live Scores Sync (API-Football)
+name: Live Scores Sync (API Providers)
 
 on:
   workflow_dispatch:
@@ -12,35 +12,71 @@ jobs:
       contents: write
 
     steps:
+      - name: Modo sem API (padrão)
+        if: ${{ vars.ENABLE_API_SYNC != 'true' }}
+        run: |
+          echo "Sincronização via API desativada (ENABLE_API_SYNC != true)."
+          echo "Fluxo ativo: atualização do bolão via Forms/planilha oficial."
+
       - name: Checkout
+        if: ${{ vars.ENABLE_API_SYNC == 'true' }}
         uses: actions/checkout@v6
 
       - name: Setup Python
+        if: ${{ vars.ENABLE_API_SYNC == 'true' }}
         uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
-      - name: Validar segredo da API
+      - name: Validar credenciais da API
+        if: ${{ vars.ENABLE_API_SYNC == 'true' }}
         env:
+          LIVE_SCORES_PROVIDER: ${{ vars.LIVE_SCORES_PROVIDER }}
           API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+          FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
         run: |
-          if [ -z "$API_FOOTBALL_KEY" ]; then
-            echo "API_FOOTBALL_KEY não configurada em Settings > Secrets and variables > Actions."
-            exit 1
+          provider="${LIVE_SCORES_PROVIDER:-api_football}"
+          echo "Provider selecionado: $provider"
+
+          if [ "$provider" = "api_football" ]; then
+            if [ -z "$API_FOOTBALL_KEY" ]; then
+              echo "API_FOOTBALL_KEY não configurada em Settings > Secrets and variables > Actions."
+              exit 1
+            fi
+            exit 0
           fi
 
+          if [ "$provider" = "football_data" ]; then
+            key="${FOOTBALL_DATA_API_KEY:-$API_FOOTBALL_KEY}"
+            if [ -z "$key" ]; then
+              echo "Configure FOOTBALL_DATA_API_KEY (ou API_FOOTBALL_KEY) para usar football_data."
+              exit 1
+            fi
+            exit 0
+          fi
+
+          echo "LIVE_SCORES_PROVIDER inválido: $provider"
+          echo "Use: api_football ou football_data"
+          exit 1
+
       - name: Sincronizar placares
+        if: ${{ vars.ENABLE_API_SYNC == 'true' }}
         env:
+          LIVE_SCORES_PROVIDER: ${{ vars.LIVE_SCORES_PROVIDER }}
           API_FOOTBALL_KEY: ${{ secrets.API_FOOTBALL_KEY }}
+          FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
           API_FOOTBALL_HOST: ${{ vars.API_FOOTBALL_HOST }}
           API_FOOTBALL_BASE_URL: ${{ vars.API_FOOTBALL_BASE_URL }}
           API_FOOTBALL_LEAGUE_ID: ${{ vars.API_FOOTBALL_LEAGUE_ID }}
+          FOOTBALL_DATA_BASE_URL: ${{ vars.FOOTBALL_DATA_BASE_URL }}
+          FOOTBALL_DATA_COMPETITION_CODE: ${{ vars.FOOTBALL_DATA_COMPETITION_CODE }}
           API_FOOTBALL_SEASON: ${{ vars.UCL_API_SEASON }}
           API_FOOTBALL_REQUIRE_NON_EMPTY: "1"
         run: |
           python tools/sync_api_matches.py
 
       - name: Validar saída da sincronização
+        if: ${{ vars.ENABLE_API_SYNC == 'true' }}
         run: |
           python - <<'PY'
           import json
@@ -56,6 +92,7 @@ jobs:
           PY
 
       - name: Commit e push dos placares atualizados
+        if: ${{ vars.ENABLE_API_SYNC == 'true' }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -64,5 +101,5 @@ jobs:
             echo "Sem alterações em placares."
             exit 0
           fi
-          git commit -m "auto(scores): sincroniza placares da Champions via API-Football"
+          git commit -m "auto(scores): sincroniza placares da Champions via provider configurado"
           git push
