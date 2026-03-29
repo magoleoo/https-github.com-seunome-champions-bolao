@@ -47,14 +47,14 @@ PHASES = [
         key="round_of_16",
         sheet_path="xl/worksheets/sheet4.xml",
         first_header_row=2,
-        first_rows=(3, 22),
-        first_official_row=23,
-        second_header_row=25,
-        second_rows=(26, 45),
-        second_official_row=46,
-        class_header_row=48,
-        class_rows=(49, 68),
-        class_official_row=69,
+        first_rows=(3, 23),
+        first_official_row=24,
+        second_header_row=26,
+        second_rows=(27, 47),
+        second_official_row=48,
+        class_header_row=50,
+        class_rows=(51, 71),
+        class_official_row=72,
     ),
 ]
 
@@ -284,10 +284,17 @@ def extract_acertos(workbook: Workbook) -> Dict[str, Dict[str, float]]:
         participant = row.get("B", "").strip()
         if not participant or participant == "APOSTADOR":
             continue
+        raw_result_hits = row.get("F", "")
+        raw_exact_hits = row.get("G", "")
+        raw_qualified_hits = row.get("H", "")
+        # Algumas linhas da aba "Acertos" chegam vazias no workbook oficial.
+        # Nesses casos, o backtest deve usar fallback calculado em vez de assumir zero.
+        if all(value in ("", None) for value in (raw_result_hits, raw_exact_hits, raw_qualified_hits)):
+            continue
         result[participant] = {
-            "round_of_16_result_hits": safe_float(row.get("F", "")) or 0.0,
-            "round_of_16_exact_hits": safe_float(row.get("G", "")) or 0.0,
-            "round_of_16_qualified_hits": safe_float(row.get("H", "")) or 0.0,
+            "round_of_16_result_hits": safe_float(raw_result_hits) or 0.0,
+            "round_of_16_exact_hits": safe_float(raw_exact_hits) or 0.0,
+            "round_of_16_qualified_hits": safe_float(raw_qualified_hits) or 0.0,
         }
     return result
 
@@ -370,6 +377,8 @@ def build_report(workbook_path: Path) -> Dict[str, object]:
                         is_hope_solo = True
                         participants[participant]["hope_solo"][phase.key] += 1
                         participants[participant]["hope_solo"]["total"] += 1
+                        # Regra Hope Solo: acerto solitário (placar ou tendência) dobra a pontuação.
+                        computed *= 2
 
                 calc_match_points += computed
                 match_details.append(
@@ -422,14 +431,25 @@ def build_report(workbook_path: Path) -> Dict[str, object]:
                 "match_details": match_details,
                 "class_details": class_details,
             }
-            if phase.key == "round_of_16" and participant in acertos:
-                phase_payload["acertos_sheet"] = acertos[participant]
+            if phase.key == "round_of_16":
+                acertos_payload = acertos.get(participant)
+                acertos_source = "sheet"
+                if acertos_payload is None:
+                    acertos_source = "computed_fallback"
+                    acertos_payload = {
+                        "round_of_16_result_hits": float(result_hits + exact_hits),
+                        "round_of_16_exact_hits": float(exact_hits),
+                        "round_of_16_qualified_hits": float(qualified_hits),
+                    }
+
+                phase_payload["acertos_sheet"] = acertos_payload
+                phase_payload["acertos_source"] = acertos_source
                 phase_payload["delta_acertos"] = {
                     "result_hits": round(
-                        (result_hits + exact_hits) - acertos[participant]["round_of_16_result_hits"], 2
+                        (result_hits + exact_hits) - acertos_payload["round_of_16_result_hits"], 2
                     ),
-                    "exact_hits": round(exact_hits - acertos[participant]["round_of_16_exact_hits"], 2),
-                    "qualified_hits": round(qualified_hits - acertos[participant]["round_of_16_qualified_hits"], 2),
+                    "exact_hits": round(exact_hits - acertos_payload["round_of_16_exact_hits"], 2),
+                    "qualified_hits": round(qualified_hits - acertos_payload["round_of_16_qualified_hits"], 2),
                 }
             participants[participant][phase.key] = phase_payload
 
@@ -451,6 +471,8 @@ def markdown_report(report: Dict[str, object], workbook_path: Path) -> str:
     playoff_ok = 0
     oitavas_ok = 0
     oitavas_acertos_ok = 0
+    oitavas_acertos_total = 0
+    oitavas_acertos_fallback = 0
     for payload in participants.values():
         playoff = payload.get("playoff", {})
         round_of_16 = payload.get("round_of_16", {})
@@ -459,14 +481,19 @@ def markdown_report(report: Dict[str, object], workbook_path: Path) -> str:
         if round_of_16 and abs(round_of_16.get("delta_total", 0.0)) < 0.001:
             oitavas_ok += 1
         delta_acertos = round_of_16.get("delta_acertos") if round_of_16 else None
-        if delta_acertos and all(abs(value) < 0.001 for value in delta_acertos.values()):
-            oitavas_acertos_ok += 1
+        if delta_acertos:
+            oitavas_acertos_total += 1
+            if round_of_16.get("acertos_source") == "computed_fallback":
+                oitavas_acertos_fallback += 1
+            if all(abs(value) < 0.001 for value in delta_acertos.values()):
+                oitavas_acertos_ok += 1
 
     lines.extend(
         [
             f"- Playoff: `{playoff_ok}/{len(participants)}` participantes batem exatamente com a planilha.",
             f"- Oitavas: `{oitavas_ok}/{len(participants)}` participantes batem exatamente com a planilha.",
-            f"- Oitavas vs aba `Acertos`: `{oitavas_acertos_ok}/{len(participants)}` participantes batem nos contadores de tendência, placar e classificados.",
+            f"- Oitavas vs aba `Acertos`: `{oitavas_acertos_ok}/{oitavas_acertos_total}` participantes batem nos contadores de tendência, placar e classificados.",
+            f"- Fallback automático de acertos aplicado em `{oitavas_acertos_fallback}` participante(s) com célula vazia na aba `Acertos`.",
             "",
             "## Participante por participante",
             "",
