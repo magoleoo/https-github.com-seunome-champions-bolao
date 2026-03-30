@@ -1768,6 +1768,7 @@ function renderMatches() {
 }
 
 function renderParticipantSnapshot() {
+  if (!predictionsForm) return;
   const participant = getParticipantById(currentUserId);
   if (!participant) {
     predictionsForm.innerHTML = PUBLIC_CONSULT_MODE
