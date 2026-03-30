@@ -1186,15 +1186,20 @@ function renderOverview(leaderboard) {
   const currentRow = leaderboard.find((row) => row.participant.id === currentUserId);
   const leader = leaderboard[0];
   const biggestRoundOf16 = [...leaderboard].sort((a, b) => b.roundOf16 - a.roundOf16)[0];
-
-  overviewCards.innerHTML = [
-    {
+  const overviewFirstCard = PUBLIC_CONSULT_MODE
+    ? {
+      label: "Consulta pública",
+      value: `${leaderboard.length}`,
+      note: "palpiteiros na base oficial",
+    }
+    : {
       label: "Sua posição",
       value: currentRow ? `${currentRow.position}º` : "-",
-      note: currentRow
-        ? `${currentRow.participant.name} com ${formatPoints(currentRow.total)} pts`
-        : (PUBLIC_CONSULT_MODE ? "Modo consulta geral (sem login individual)." : "Faça login para ver"),
-    },
+      note: currentRow ? `${currentRow.participant.name} com ${formatPoints(currentRow.total)} pts` : "Faça login para ver",
+    };
+
+  overviewCards.innerHTML = [
+    overviewFirstCard,
     {
       label: "Líder geral",
       value: leader ? leader.participant.name : "-",
