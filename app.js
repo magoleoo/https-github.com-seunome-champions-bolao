@@ -3153,6 +3153,7 @@ function renderPredictionsGallery() {
 
 let activePredictionsPhase = "LEAGUE";
 let activePredictionsFilter = "Matchday 1";
+const PREDICTIONS_FILTER_CLASSIFIED = "CLASSIFIED_TOP8";
 let latestPredictionExportPayload = {
   title: "",
   sections: [],
@@ -3173,6 +3174,22 @@ function getLegToken(value) {
   if (normalized.includes("ida")) return "IDA";
   if (normalized.includes("volta")) return "VOLTA";
   return "";
+}
+
+function isLeagueClassificationFixture(fixture) {
+  const label = normalizeText(String(fixture?.label || ""));
+  const matchday = normalizeText(String(fixture?.matchday || ""));
+  return (
+    label.startsWith("classificado em") ||
+    label.startsWith("classificado") ||
+    matchday.startsWith("classificado")
+  );
+}
+
+function getClassificationSlotNumber(fixture) {
+  const label = String(fixture?.label || fixture?.matchday || "");
+  const match = label.match(/(\d+)/);
+  return match ? Number(match[1]) : Number.POSITIVE_INFINITY;
 }
 
 function resolvePredictionHitType(fixture, pickValue) {
@@ -3292,6 +3309,85 @@ function buildPredictionMatrixSection(fixtures, sectionTitle = "") {
   };
 }
 
+function buildLeagueClassificationMatrixSection(fixtures) {
+  const knownParticipants = participants.map((participant) => participant.name);
+  const knownParticipantsKeys = new Set(knownParticipants.map((name) => normalizeText(name)));
+  const extraParticipantsByKey = new Map();
+
+  const orderedFixtures = [...fixtures].sort(
+    (a, b) => getClassificationSlotNumber(a) - getClassificationSlotNumber(b)
+  );
+
+  const columns = orderedFixtures.map((fixture, index) => {
+    const picksByParticipant = new Map();
+    (fixture?.picks || []).forEach((pick) => {
+      const participantName = String(pick?.participant || "").trim();
+      if (!participantName) return;
+      const participantKey = normalizeText(participantName);
+      const pickValue = String(pick?.pick || "").trim();
+      picksByParticipant.set(participantKey, pickValue || "-");
+      if (!knownParticipantsKeys.has(participantKey) && !extraParticipantsByKey.has(participantKey)) {
+        extraParticipantsByKey.set(participantKey, participantName);
+      }
+    });
+
+    const officialTeam = String(fixture?.official || "").trim();
+    return {
+      fixture,
+      subtitle: `Posição ${index + 1}`,
+      label: officialTeam || `Classificado ${index + 1}`,
+      official: officialTeam || "-",
+      picksByParticipant,
+    };
+  });
+
+  const officialTeamsSet = new Set(
+    columns
+      .map((column) => normalizeText(column.official))
+      .filter(Boolean)
+  );
+
+  const extraParticipants = [...extraParticipantsByKey.values()].sort((a, b) =>
+    a.localeCompare(b, "pt-BR")
+  );
+  const allParticipants = [...knownParticipants, ...extraParticipants];
+
+  const rows = allParticipants.map((participantName) => {
+    const participantKey = normalizeText(participantName);
+    const cells = columns.map((column) => {
+      const value = column.picksByParticipant.get(participantKey) || "-";
+      const valueKey = normalizeText(value);
+      const officialKey = normalizeText(column.official);
+      let hitType = "";
+      if (value !== "-" && valueKey) {
+        if (officialKey && valueKey === officialKey) {
+          hitType = "exact";
+        } else if (officialTeamsSet.has(valueKey)) {
+          hitType = "trend";
+        }
+      }
+      return { value, hitType };
+    });
+
+    return { participantName, cells };
+  });
+
+  return {
+    sectionTitle: "Classificados da Primeira Fase (Top 8)",
+    columns,
+    rows,
+    hitLabels: {
+      exact: "Posição cravada",
+      trend: "Classificado certo",
+    },
+    mobileStatLabels: {
+      exact: "posição(ões) cravada(s)",
+      trend: "classificado(s) certo(s)",
+    },
+    mobileEmptyLabel: "Ninguém acertou posição ou classificado neste slot.",
+  };
+}
+
 function drawWrappedCanvasText(ctx, text, x, y, maxWidth, lineHeight, maxLines = 3) {
   const words = String(text || "").split(/\s+/).filter(Boolean);
   if (!words.length) return 0;
@@ -3325,6 +3421,9 @@ function drawWrappedCanvasText(ctx, text, x, y, maxWidth, lineHeight, maxLines =
 function buildPredictionExportCanvas(payload) {
   const sections = Array.isArray(payload?.sections) ? payload.sections : [];
   if (!sections.length) return null;
+  const firstSection = sections[0] || {};
+  const exactLegendLabel = firstSection.hitLabels?.exact || "Placar exato";
+  const trendLegendLabel = firstSection.hitLabels?.trend || "Tendência";
 
   const padding = 24;
   const titleHeight = 56;
@@ -3382,11 +3481,11 @@ function buildPredictionExportCanvas(payload) {
   ctx.fillRect(width - 340, legendY - 12, 18, 12);
   ctx.fillStyle = "#d8f3dc";
   ctx.font = '600 11px "Space Grotesk", sans-serif';
-  ctx.fillText("Placar exato", width - 316, legendY - 2);
+  ctx.fillText(exactLegendLabel, width - 316, legendY - 2);
   ctx.fillStyle = "rgba(255, 200, 0, 0.24)";
   ctx.fillRect(width - 210, legendY - 12, 18, 12);
   ctx.fillStyle = "#ffe6a0";
-  ctx.fillText("Tendência", width - 186, legendY - 2);
+  ctx.fillText(trendLegendLabel, width - 186, legendY - 2);
 
   let y = padding + titleHeight;
   sections.forEach((section) => {
@@ -3575,7 +3674,7 @@ function renderPredictionConsultation() {
     { id: "FINAL", label: "Final" }
   ];
 
-  const leagueRounds = Array.from({length: 8}, (_, i) => `Matchday ${i+1}`);
+  const leagueRounds = Array.from({ length: 8 }, (_, i) => `Matchday ${i + 1}`);
 
   let phaseTabsHTML = `<div class="predictions-subtabs predictions-subtabs--framed">`;
   validPhases.forEach(ph => {
@@ -3595,8 +3694,11 @@ function renderPredictionConsultation() {
   let secondaryTabsHTML = '';
   if (activePredictionsPhase === "LEAGUE") {
     secondaryTabsHTML = `<div class="predictions-subtabs">`;
-    leagueRounds.forEach(r => {
-      const badgeText = r.replace("Matchday", "Rodada");
+    [...leagueRounds, PREDICTIONS_FILTER_CLASSIFIED].forEach((r) => {
+      const badgeText =
+        r === PREDICTIONS_FILTER_CLASSIFIED
+          ? "Classificados"
+          : r.replace("Matchday", "Rodada");
       const isActive = r === activePredictionsFilter;
       secondaryTabsHTML += `
         <button
@@ -3614,27 +3716,37 @@ function renderPredictionConsultation() {
   let srcFixtures = [];
   if (activePredictionsPhase === "LEAGUE") {
     const rawMatches = backtestData?.phases?.[activePredictionsPhase]?.fixtures || [];
-    const targetRound = getMatchdayNumber(activePredictionsFilter);
-    srcFixtures = rawMatches.filter((fixture) => {
-      const matchdayLabel = normalizeText(String(fixture?.matchday || ""));
-      const isRoundFixture =
-        matchdayLabel.includes("matchday") || matchdayLabel.includes("machtday");
-      if (!isRoundFixture) return false;
-      return getMatchdayNumber(fixture?.matchday) === targetRound;
-    });
+    if (activePredictionsFilter === PREDICTIONS_FILTER_CLASSIFIED) {
+      srcFixtures = rawMatches.filter((fixture) => isLeagueClassificationFixture(fixture));
+    } else {
+      const targetRound = getMatchdayNumber(activePredictionsFilter);
+      srcFixtures = rawMatches.filter((fixture) => {
+        const matchdayLabel = normalizeText(String(fixture?.matchday || ""));
+        const isRoundFixture =
+          matchdayLabel.includes("matchday") || matchdayLabel.includes("machtday");
+        if (!isRoundFixture) return false;
+        return getMatchdayNumber(fixture?.matchday) === targetRound;
+      });
+    }
   } else {
     srcFixtures = backtestData?.phases?.[activePredictionsPhase]?.fixtures || [];
   }
 
   const activePhaseMeta = validPhases.find((phase) => phase.id === activePredictionsPhase);
   const exportTitle = activePredictionsPhase === "LEAGUE"
-    ? `Palpites ${activePhaseMeta?.label || "Primeira Fase"} - ${activePredictionsFilter.replace("Matchday", "Rodada")}`
+    ? (
+      activePredictionsFilter === PREDICTIONS_FILTER_CLASSIFIED
+        ? `Palpites ${activePhaseMeta?.label || "Primeira Fase"} - Classificados`
+        : `Palpites ${activePhaseMeta?.label || "Primeira Fase"} - ${activePredictionsFilter.replace("Matchday", "Rodada")}`
+    )
     : `Palpites ${activePhaseMeta?.label || activePredictionsPhase}`;
 
   let matrixSections = [];
   const phasesWithTwoLegs = ["PLAYOFF", "ROUND_OF_16"];
   if (srcFixtures.length) {
-    if (phasesWithTwoLegs.includes(activePredictionsPhase)) {
+    if (activePredictionsPhase === "LEAGUE" && activePredictionsFilter === PREDICTIONS_FILTER_CLASSIFIED) {
+      matrixSections = [buildLeagueClassificationMatrixSection(srcFixtures)];
+    } else if (phasesWithTwoLegs.includes(activePredictionsPhase)) {
       const { idaFixtures, voltaFixtures } = splitPredictionFixturesByLeg(srcFixtures);
       if (idaFixtures.length) matrixSections.push(buildPredictionMatrixSection(idaFixtures, "Jogos de Ida"));
       if (voltaFixtures.length) matrixSections.push(buildPredictionMatrixSection(voltaFixtures, "Jogos de Volta"));
@@ -3679,6 +3791,12 @@ function renderPredictionConsultation() {
     if (!section.columns.length) {
       return "";
     }
+    const exactLabel = section.hitLabels?.exact || "Placar exato";
+    const trendLabel = section.hitLabels?.trend || "Tendência";
+    const exactStatLabel = section.mobileStatLabels?.exact || "exato(s)";
+    const trendStatLabel = section.mobileStatLabels?.trend || "tendência(s)";
+    const emptyHitLabel =
+      section.mobileEmptyLabel || "Ninguém acertou placar exato ou tendência neste jogo.";
 
     return `
       <section class="predictions-matrix-section">
@@ -3721,9 +3839,9 @@ function renderPredictionConsultation() {
                               ? "hit-trend"
                               : "";
                           const marker = cell.hitType === "exact"
-                            ? `<span class="predictions-cell-mark exact">Placar exato</span>`
+                            ? `<span class="predictions-cell-mark exact">${exactLabel}</span>`
                             : cell.hitType === "trend"
-                              ? `<span class="predictions-cell-mark trend">Tendência</span>`
+                              ? `<span class="predictions-cell-mark trend">${trendLabel}</span>`
                               : "";
                           return `
                             <td class="${hitClass}">
@@ -3779,14 +3897,14 @@ function renderPredictionConsultation() {
                     picks.length
                       ? `
                         <div class="prediction-mobile-stats">
-                          <span class="prediction-mobile-stat exact">🎯 ${exactHits.length} exato(s)</span>
-                          <span class="prediction-mobile-stat trend">📈 ${trendHits.length} tendência(s)</span>
+                          <span class="prediction-mobile-stat exact">🎯 ${exactHits.length} ${exactStatLabel}</span>
+                          <span class="prediction-mobile-stat trend">📈 ${trendHits.length} ${trendStatLabel}</span>
                           <span class="prediction-mobile-stat neutral">${otherPicks.length} outro(s)</span>
                         </div>
 
                         ${
                           !exactHits.length && !trendHits.length
-                            ? `<p class="prediction-mobile-empty-hit muted">Ninguém acertou placar exato ou tendência neste jogo.</p>`
+                            ? `<p class="prediction-mobile-empty-hit muted">${emptyHitLabel}</p>`
                             : ""
                         }
 
@@ -3794,7 +3912,7 @@ function renderPredictionConsultation() {
                           exactHits.length
                             ? `
                               <section class="prediction-mobile-group">
-                                <h4 class="prediction-mobile-group-title">Placar exato</h4>
+                                <h4 class="prediction-mobile-group-title">${exactLabel}</h4>
                                 <ul class="prediction-mobile-list">
                                   ${renderPickRows(exactHits, "is-exact")}
                                 </ul>
@@ -3807,7 +3925,7 @@ function renderPredictionConsultation() {
                           trendHits.length
                             ? `
                               <section class="prediction-mobile-group">
-                                <h4 class="prediction-mobile-group-title">Tendência</h4>
+                                <h4 class="prediction-mobile-group-title">${trendLabel}</h4>
                                 <ul class="prediction-mobile-list">
                                   ${renderPickRows(trendHits, "is-trend")}
                                 </ul>
