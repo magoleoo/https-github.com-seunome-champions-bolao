@@ -1,0 +1,34 @@
+name: Supabase Shadow Sync
+
+on:
+  workflow_dispatch:
+
+jobs:
+  sync-shadow:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Modo aguardando configuração do Supabase
+        if: ${{ vars.SUPABASE_URL == '' || secrets.SUPABASE_SERVICE_ROLE_KEY == '' }}
+        run: |
+          echo "SUPABASE_URL (variable) ou SUPABASE_SERVICE_ROLE_KEY (secret) não configurados."
+          echo "Workflow encerrado em modo espera (sem erro)."
+
+      - name: Checkout Repo
+        if: ${{ vars.SUPABASE_URL != '' && secrets.SUPABASE_SERVICE_ROLE_KEY != '' }}
+        uses: actions/checkout@v6
+
+      - name: Setup Python
+        if: ${{ vars.SUPABASE_URL != '' && secrets.SUPABASE_SERVICE_ROLE_KEY != '' }}
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Sincronizar snapshot do bolão para Supabase
+        if: ${{ vars.SUPABASE_URL != '' && secrets.SUPABASE_SERVICE_ROLE_KEY != '' }}
+        env:
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          BOLAO_SEASON_ID: ${{ vars.BOLAO_SEASON_ID }}
+        run: |
+          python tools/sync_shadow_to_supabase.py
