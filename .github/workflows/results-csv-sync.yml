@@ -1,0 +1,33 @@
+name: Results CSV Sync
+
+on:
+  workflow_dispatch:
+
+jobs:
+  sync-results-from-csv:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v6
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Sincronizar resultados via CSV oficial
+        env:
+          BOLAO_RESULTS_CSV_URL: ${{ vars.BOLAO_RESULTS_CSV_URL }}
+        run: |
+          python tools/sync_results_from_csv.py
+
+      - name: Commit e push de api/matches
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add api/matches.json api/matches.js
+          git commit -m "auto(results): atualiza placares via CSV oficial" || exit 0
+          git push
