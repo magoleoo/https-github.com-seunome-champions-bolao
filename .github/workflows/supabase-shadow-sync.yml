@@ -8,24 +8,36 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Validar configuração do Supabase
+        id: guard
+        env:
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          if [ -z "${SUPABASE_URL}" ] || [ -z "${SUPABASE_SERVICE_ROLE_KEY}" ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Modo aguardando configuração do Supabase
-        if: ${{ vars.SUPABASE_URL == '' || secrets.SUPABASE_SERVICE_ROLE_KEY == '' }}
+        if: ${{ steps.guard.outputs.ready != 'true' }}
         run: |
           echo "SUPABASE_URL (variable) ou SUPABASE_SERVICE_ROLE_KEY (secret) não configurados."
           echo "Workflow encerrado em modo espera (sem erro)."
 
       - name: Checkout Repo
-        if: ${{ vars.SUPABASE_URL != '' && secrets.SUPABASE_SERVICE_ROLE_KEY != '' }}
+        if: ${{ steps.guard.outputs.ready == 'true' }}
         uses: actions/checkout@v6
 
       - name: Setup Python
-        if: ${{ vars.SUPABASE_URL != '' && secrets.SUPABASE_SERVICE_ROLE_KEY != '' }}
+        if: ${{ steps.guard.outputs.ready == 'true' }}
         uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
       - name: Sincronizar snapshot do bolão para Supabase
-        if: ${{ vars.SUPABASE_URL != '' && secrets.SUPABASE_SERVICE_ROLE_KEY != '' }}
+        if: ${{ steps.guard.outputs.ready == 'true' }}
         env:
           SUPABASE_URL: ${{ vars.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
